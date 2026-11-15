@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23111111'><path d='M12 2c1.1 0 2 .9 2 2v1.09c3.96.48 7.08 3.6 7.56 7.56H22c1.1 0 2 .9 2 2s-.9 2-2 2h-1.09c-.48 3.96-3.6 7.08-7.56 7.56V22c0 1.1-.9 2-2 2s-2-.9-2-2v-1.09c-3.96-.48-7.08-3.6-7.56-7.56H2c-1.1 0-2-.9-2-2s.9-2 2-2h1.09C3.57 6.69 6.69 3.57 10.65 3.09V2c0-1.1.9-2 2-2zm0 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14zm0 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8z'/></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="IGNIS — Beyond the Hotspot: Harmonization of NASA MODIS and VIIRS active-fire observations into a consistent burning-activity calendar." />
+    <title>IGNIS — Beyond the Hotspot | NASA MODIS & VIIRS Harmonization</title>
+    <!-- Professional Scientific Typography: Inter & IBM Plex Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;1,14..32,400&display=swap" rel="stylesheet">
+    <!-- CesiumJS Configuration & Assets Base URL -->
+    <script>
+      window.CESIUM_BASE_URL = 'https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/';
+    </script>
+    <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Widgets/widgets.css" />
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.120/Build/Cesium/Cesium.js"></script>
+    <!-- Secondary CDN Fallback Loader -->
+    <script>
+      setTimeout(() => {
+        if (!window.Cesium) {
+          console.warn('[IGNIS] Primary Cesium CDN timed out. Injecting secondary CDN fallback (cdnjs)...');
+          window.CESIUM_BASE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/cesium/1.120.0/';
+          const css = document.createElement('link');
+          css.rel = 'stylesheet';
+          css.href = 'https://cdnjs.cloudflare.com/ajax/libs/cesium/1.120.0/Widgets/widgets.css';
+          document.head.appendChild(css);
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/cesium/1.120.0/Cesium.js';
+          document.head.appendChild(s);
+        }
+      }, 3500);
+    </script>
+  </head>
+  <body class="bg-ignis-bg text-ignis-text antialiased selection:bg-[#111111] selection:text-white font-sans">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
