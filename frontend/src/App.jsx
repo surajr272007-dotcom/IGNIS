@@ -37,15 +37,27 @@ export default function App() {
   const [anomalyData, setAnomalyData] = useState(null);
   const [health, setHealth] = useState(null);
 
-  // Dataset Provenance state ('LIVE', 'SAMPLE', 'AUTO')
-  const [datasetMode, setDatasetMode] = useState('AUTO');
+  // Dataset Provenance state ('LIVE', 'SAMPLE', 'AUTO') - defaults strictly to SAMPLE DATA
+  const [datasetMode, setDatasetMode] = useState('SAMPLE');
 
   // Status & modal states
   const [loading, setLoading] = useState(true);
+  const [isColdStart, setIsColdStart] = useState(false);
   const [error, setError] = useState(null);
   const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
   const [isRefreshModalOpen, setIsRefreshModalOpen] = useState(false);
   const [mapKey, setMapKey] = useState(() => localStorage.getItem("IGNIS_FIRMS_MAP_KEY") || "");
+
+  // Render Free cold start notification watcher (triggers if loading takes >2.5s)
+  useEffect(() => {
+    let timer;
+    if (loading) {
+      timer = setTimeout(() => setIsColdStart(true), 2500);
+    } else {
+      setIsColdStart(false);
+    }
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   // Load initial health and AOI registry
   useEffect(() => {
@@ -67,7 +79,7 @@ export default function App() {
   }, []);
 
   // Fetch all domain data when AOI or dataset mode changes
-  const loadAoiData = async (aoiId = selectedAoiId, spatialThreshold = 1.5, targetMode = datasetMode, temporalThreshold = 2.5) => {
+  const loadAoiData = async (aoiId = selectedAoiId, spatialThreshold = 1.5, targetMode = 'SAMPLE', temporalThreshold = 2.5) => {
     try {
       setLoading(true);
       setError(null);
@@ -202,20 +214,26 @@ export default function App() {
           </div>
         )}
 
-        {/* Global Loading Spinner */}
+        {/* Global Loading Spinner with Cold-Start Notice */}
         {loading && !observations.length && (
           <div className="py-24 flex flex-col items-center justify-center text-center space-y-4 animate-fade-in">
             <div className="relative w-12 h-12">
               <div className="absolute inset-0 rounded-full border-2 border-[#E5E5E5]" />
               <div className="absolute inset-0 rounded-full border-2 border-t-[#111111] animate-spin" />
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 max-w-md mx-auto">
               <span className="font-mono text-sm text-[#111111] font-semibold block">
                 Synchronizing Satellite Constellation
               </span>
               <span className="text-xs text-[#666666] font-mono block">
-                Loading observations from DuckDB warehouse ({datasetMode} mode)...
+                Loading observations from cloud DuckDB warehouse ({datasetMode} mode)...
               </span>
+              {isColdStart && (
+                <div className="mt-3 p-3 rounded-lg bg-[#FAFAFA] border border-[#E5E5E5] text-[11px] font-mono text-[#666666] animate-fade-in shadow-2xs">
+                  <span className="text-[#111111] font-semibold block mb-0.5">Connecting to Render Free Cloud Backend</span>
+                  <span>If waking up from sleep, Render spin-up may take ~30s. Observations will display automatically.</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -342,7 +360,7 @@ export default function App() {
           <span>•</span>
           <span className="flex items-center gap-1.5 font-semibold text-[#111111]">
             <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-emerald-500 live-pulse' : 'bg-amber-500'}`} />
-            {isLive ? "LIVE SATELLITE STREAM" : "DEMO ARCHIVE"}
+            {isLive ? "LIVE SATELLITE STREAM" : "SAMPLE DATA (REFERENCE ARCHIVE)"}
           </span>
         </div>
         <div className="text-[11px] text-[#888888]">

@@ -90,8 +90,8 @@ export default function BurningCalendar({
             <h2 className="text-xl font-semibold text-[#111111] tracking-tight font-sans">
               Harmonized Burning Activity Calendar
             </h2>
-            <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-mono font-medium">
-              Core Module
+            <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-mono font-medium">
+              SAMPLE BENCHMARK
             </span>
           </div>
           <p className="text-xs text-[#666666] mt-1 max-w-2xl font-sans">

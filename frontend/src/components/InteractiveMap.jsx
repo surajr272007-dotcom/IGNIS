@@ -256,7 +256,8 @@ export default function InteractiveMap({
 
         {/* Observation & Cluster Counter Status Pill */}
         <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-white border border-[#E5E5E5] rounded-lg font-mono tabular-nums text-xs shadow-xs">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-amber-500" />
+          <span className="text-[10px] font-sans font-medium text-amber-800 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">SAMPLE DATA</span>
           <span className="text-[#111111] font-semibold">
             {filteredObs.length > 3000 ? `3,000 / ${filteredObs.length.toLocaleString()}` : filteredObs.length.toLocaleString()}
           </span>

@@ -33,7 +33,7 @@ export default function Navbar({
 }) {
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Activity },
-    { id: 'globe', label: '3D Earth Globe', icon: Globe, badge: 'NASA Live' },
+    { id: 'globe', label: '3D Earth Globe', icon: Globe, badge: 'Cesium 3D' },
     { id: 'map', label: '2D Fire Map', icon: MapIcon },
     { id: 'calendar', label: 'Burning Calendar', icon: CalendarIcon, badge: 'Core' },
     { id: 'harmonization', label: 'Harmonization', icon: Layers },
@@ -167,20 +167,8 @@ export default function Navbar({
 
           {/* Dataset Provenance Pill */}
           <div className="flex items-center gap-2 text-xs font-sans shrink-0">
-            <span className="text-[10px] text-[#888888] uppercase tracking-wider font-mono">Dataset:</span>
+            <span className="text-[10px] text-[#888888] uppercase tracking-wider font-mono">Active Dataset:</span>
             <div className="inline-flex rounded-lg bg-[#FAFAFA] border border-[#E5E5E5] p-0.5">
-              <button
-                onClick={() => onToggleDatasetMode('LIVE')}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-sans font-medium transition-all flex items-center gap-1.5 ${
-                  datasetMode === 'LIVE'
-                    ? "bg-[#111111] text-white shadow-xs"
-                    : "text-[#666666] hover:text-[#111111]"
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400 live-pulse' : 'bg-[#888888]'}`} />
-                <span>Live Feed <span className="font-mono tabular-nums font-normal">({liveCount?.toLocaleString() || 0})</span></span>
-              </button>
-
               <button
                 onClick={() => onToggleDatasetMode('SAMPLE')}
                 className={`px-2.5 py-1 rounded-md text-[11px] font-sans font-medium transition-all flex items-center gap-1.5 ${
@@ -188,9 +176,23 @@ export default function Navbar({
                     ? "bg-[#111111] text-white shadow-xs"
                     : "text-[#666666] hover:text-[#111111]"
                 }`}
+                title="NASA FIRMS Reference Sample Archive (MCD14DL & VNP14IMGTDL)"
               >
-                <Database className="w-3 h-3 text-[#888888]" />
-                <span>Demo Archive <span className="font-mono tabular-nums font-normal">({sampleCount?.toLocaleString() || 0})</span></span>
+                <Database className="w-3 h-3 text-amber-500" />
+                <span>Sample Archive <span className="font-mono tabular-nums font-normal">({sampleCount?.toLocaleString() || 0})</span></span>
+              </button>
+
+              <button
+                onClick={() => onToggleDatasetMode('LIVE')}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-sans font-medium transition-all flex items-center gap-1.5 ${
+                  datasetMode === 'LIVE'
+                    ? "bg-[#111111] text-white shadow-xs"
+                    : "text-[#666666] hover:text-[#111111]"
+                }`}
+                title="Live satellite feed from NASA FIRMS"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${isLive ? 'bg-emerald-400 live-pulse' : 'bg-[#888888]'}`} />
+                <span>Live Feed <span className="font-mono tabular-nums font-normal">({liveCount?.toLocaleString() || 0})</span></span>
               </button>
             </div>
           </div>

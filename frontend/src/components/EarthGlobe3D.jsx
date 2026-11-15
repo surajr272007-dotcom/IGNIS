@@ -1298,16 +1298,16 @@ export default function EarthGlobe3D({
                 <span className={`relative inline-flex rounded-full h-2 w-2 ${globeViewMode === 'HARMONIZED' ? 'bg-cyan-500' : 'bg-emerald-500'}`} />
               </span>
               <span className="font-medium text-[#111111] uppercase text-[11px] tracking-wider font-sans">
-                {globeViewMode === 'HARMONIZED' ? 'Harmonized Stream' : 'Active Fire Stream'}
+                {globeViewMode === 'HARMONIZED' ? 'Harmonized Stream' : (isLive ? 'Active Fire Stream' : 'Sample Fire Stream')}
               </span>
             </div>
             <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-medium flex items-center gap-1 ${
               globeViewMode === 'HARMONIZED'
                 ? 'bg-cyan-50 text-cyan-800 border border-cyan-200'
-                : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                : (isLive ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200')
             }`}>
               {globeViewMode === 'HARMONIZED' ? <GitMerge className="w-3 h-3" /> : null}
-              {globeViewMode === 'HARMONIZED' ? 'MODIS + VIIRS' : (isLive ? 'LIVE_FIRMS' : 'SAMPLE')}
+              {globeViewMode === 'HARMONIZED' ? 'MODIS + VIIRS (SAMPLE)' : (isLive ? 'LIVE_FIRMS' : 'SAMPLE DATA')}
             </span>
           </div>
 
@@ -1337,7 +1337,7 @@ export default function EarthGlobe3D({
                 <strong className="text-[#111111] text-sm font-semibold font-mono tabular-nums block mt-0.5">
                   {liveStats.displayedCount.toLocaleString()}
                 </strong>
-                <span className="text-[9px] text-[#666666] font-mono tabular-nums">of {totalAvailable.toLocaleString()} live</span>
+                <span className="text-[9px] text-[#666666] font-mono tabular-nums">of {totalAvailable.toLocaleString()} {isLive ? 'live' : 'in sample archive'}</span>
               </div>
 
               <div className="p-2 rounded-lg bg-white border border-[#E5E5E5]">

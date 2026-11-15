@@ -122,8 +122,8 @@ export default function HarmonizationView({
             <h2 className="text-xl font-semibold text-[#111111] tracking-tight font-sans">
               MODIS–VIIRS Sensor Harmonization Engine
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-mono font-medium">
-              NASA Space Apps Protocol
+            <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-mono font-medium">
+              SAMPLE BENCHMARK
             </span>
           </div>
           <p className="text-xs text-[#666666] max-w-2xl leading-relaxed font-sans">

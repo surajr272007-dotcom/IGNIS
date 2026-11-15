@@ -46,29 +46,25 @@ export default function OverviewDashboard({
     <div className="space-y-6 font-sans">
       
       {/* Live Data vs Sample Archive Callout Banner */}
-      <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all animate-enter ${
-        isLive
-          ? "bg-[#FAFAFA] border-[#E5E5E5] text-[#111111]"
-          : "bg-[#FAFAFA] border-[#E5E5E5] text-[#111111]"
-      }`}>
+      <div className="p-4 rounded-xl border border-[#E5E5E5] bg-[#FAFAFA] text-[#111111] flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all animate-enter">
         <div className="flex items-start sm:items-center gap-3">
           <div className={`w-2.5 h-2.5 rounded-full mt-1 sm:mt-0 shrink-0 ${
             isLive ? 'bg-emerald-500 live-pulse' : 'bg-amber-500'
           }`} />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-medium text-xs uppercase font-mono tracking-wider text-[#111111]">
-                {isLive ? "LIVE SATELLITE FEED (NASA FIRMS)" : "DEMONSTRATION SAMPLE ARCHIVE"}
+              <span className="font-semibold text-xs uppercase font-mono tracking-wider text-[#111111]">
+                {isLive ? "LIVE SATELLITE FEED (NASA FIRMS)" : "ACTIVE APPLICATION DATASET: SAMPLE DATA"}
               </span>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white border border-[#E5E5E5] text-[#666666] font-medium">
-                {isLive ? "Genuine Active Detections" : "Offline Benchmark"}
+                {isLive ? "Genuine Active Detections" : "NASA Reference Archive"}
               </span>
             </div>
             <p className="text-xs text-[#666666] mt-0.5 font-normal">
               {isLive ? (
                 <>Acquisition Window: <strong className="text-[#111111] font-mono tabular-nums font-medium">{summary?.earliest_date}</strong> to <strong className="text-[#111111] font-mono tabular-nums font-medium">{summary?.latest_date}</strong> • Active Sensors: MODIS (Terra/Aqua) + VIIRS (S-NPP/NOAA-20/NOAA-21)</>
               ) : (
-                <>Displaying pre-seeded reference sample baseline. Click <strong className="font-medium">Refresh NASA Data</strong> to ingest live active-fire observations.</>
+                <>Displaying reference sample observations for MODIS MCD14DL (1km) & VIIRS VNP14IMGTDL (375m). Benchmarked across multi-year fire regimes for scientific harmonization validation.</>
               )}
             </p>
           </div>
