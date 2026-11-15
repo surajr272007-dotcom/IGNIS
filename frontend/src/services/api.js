@@ -3,7 +3,7 @@
  * Interfaces with FastAPI backend for NASA FIRMS harmonization data and models.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000/api` : "http://127.0.0.1:8000/api");
+const API_BASE = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:8000/api` : "http://127.0.0.1:8000/api");
 
 export async function fetchHealth() {
   const res = await fetch(`${API_BASE}/health`);

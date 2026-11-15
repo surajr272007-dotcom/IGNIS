@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
-from typing import Union
+from typing import Union, Optional
 from pydantic import field_validator
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     FIRMS_MAP_KEY: str = os.getenv("FIRMS_MAP_KEY", "")
     NASA_FIRMS_BASE_URL: str = os.getenv("NASA_FIRMS_BASE_URL", "https://firms.modaps.eosdis.nasa.gov")
     DUCKDB_PATH: str = os.getenv("DUCKDB_PATH", str(BASE_DIR / "ignis_warehouse.duckdb"))
+    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL", None)
     CORS_ORIGINS: Union[list[str], str] = [
         "http://localhost:5173",
         "http://localhost:3000",

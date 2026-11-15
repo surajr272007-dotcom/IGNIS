@@ -31,11 +31,21 @@ def _resolve_param(val):
 @api_router.get("/health")
 def health_check():
     """System health check endpoint verifying database and service readiness."""
+    engine_name = "PostgreSQL" if getattr(db_service, "engine_type", "duckdb") == "postgres" else "DuckDB"
     try:
         conn = db_service.get_connection()
-        total_obs = conn.execute("SELECT count(*) FROM raw_observations").fetchone()[0]
-        live_obs = conn.execute("SELECT count(*) FROM raw_observations WHERE data_source = 'LIVE_FIRMS'").fetchone()[0]
-        sample_obs = conn.execute("SELECT count(*) FROM raw_observations WHERE data_source = 'SAMPLE_ARCHIVE'").fetchone()[0]
+        if getattr(db_service, "engine_type", "duckdb") == "postgres":
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM raw_observations")
+                total_obs = cur.fetchone()[0]
+                cur.execute("SELECT count(*) FROM raw_observations WHERE data_source = 'LIVE_FIRMS'")
+                live_obs = cur.fetchone()[0]
+                cur.execute("SELECT count(*) FROM raw_observations WHERE data_source = 'SAMPLE_ARCHIVE'")
+                sample_obs = cur.fetchone()[0]
+        else:
+            total_obs = conn.execute("SELECT count(*) FROM raw_observations").fetchone()[0]
+            live_obs = conn.execute("SELECT count(*) FROM raw_observations WHERE data_source = 'LIVE_FIRMS'").fetchone()[0]
+            sample_obs = conn.execute("SELECT count(*) FROM raw_observations WHERE data_source = 'SAMPLE_ARCHIVE'").fetchone()[0]
         conn.close()
         db_status = "connected"
     except Exception as e:
@@ -49,7 +59,7 @@ def health_check():
         "service": "IGNIS Active Fire Harmonization API",
         "version": "1.1.0",
         "database": {
-            "engine": "DuckDB",
+            "engine": engine_name,
             "status": db_status,
             "total_observations_indexed": total_obs,
             "live_observations_indexed": live_obs,

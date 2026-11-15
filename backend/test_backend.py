@@ -16,9 +16,9 @@ class TestIgnisBackend(unittest.TestCase):
     def test_01_health_check(self):
         res = health_check()
         self.assertEqual(res["status"], "healthy")
-        self.assertEqual(res["database"]["engine"], "DuckDB")
+        self.assertIn(res["database"]["engine"], ["DuckDB", "PostgreSQL"])
         self.assertGreater(res["database"]["total_observations_indexed"], 0)
-        print("✓ Health check verified:", res["database"]["total_observations_indexed"], "observations indexed.")
+        print("✓ Health check verified:", res["database"]["total_observations_indexed"], "observations indexed. Engine:", res["database"]["engine"])
 
     def test_02_aoi_list(self):
         res = list_aois()
@@ -103,7 +103,10 @@ class TestIgnisBackend(unittest.TestCase):
     def test_08_dataset_separation_and_deduplication(self):
         # Verify schema
         conn = db_service.get_connection()
-        cols = [c[0] for c in conn.execute("DESCRIBE raw_observations").fetchall()]
+        if getattr(db_service, "engine_type", "duckdb") == "postgres":
+            cols = [c[0] for c in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'raw_observations'").fetchall()]
+        else:
+            cols = [c[0] for c in conn.execute("DESCRIBE raw_observations").fetchall()]
         self.assertIn("data_source", cols)
         self.assertIn("ingested_at", cols)
         self.assertIn("raw_hash", cols)
