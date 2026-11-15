@@ -659,11 +659,31 @@ async def refresh_global_nasa_data(
             "message": "NASA FIRMS Map Key is required. Please configure FIRMS_MAP_KEY in backend/.env."
         }
 
+    insert_stats = {
+        "received": 0,
+        "validated": 0,
+        "inserted": 0,
+        "duplicates_skipped": 0,
+        "invalid_rejected": 0
+    }
+
+    def handle_batch(batch: List[Dict[str, Any]], source: str):
+        if not batch:
+            return
+        b_stats = db_service.insert_observations(batch, data_source="LIVE_FIRMS")
+        insert_stats["received"] += b_stats.get("received", 0)
+        insert_stats["validated"] += b_stats.get("validated", 0)
+        insert_stats["inserted"] += b_stats.get("inserted", 0)
+        insert_stats["duplicates_skipped"] += b_stats.get("duplicates_skipped", 0)
+        insert_stats["invalid_rejected"] += b_stats.get("invalid_rejected", 0)
+
     query_res = await firms_client.fetch_global_fires(
         days=payload.days,
         date_str=payload.date_str,
         map_key=effective_key,
-        sources=payload.sources
+        sources=payload.sources,
+        on_batch=handle_batch,
+        batch_size=2500
     )
 
     if not query_res["success"]:
@@ -683,34 +703,42 @@ async def refresh_global_nasa_data(
             "message": query_res.get("message")
         }
 
-    raw_observations = query_res.get("observations", [])
+    # If on_batch was bypassed, fallback to bulk insert
+    if insert_stats["received"] == 0 and query_res.get("observations"):
+        fallback_stats = db_service.insert_observations(query_res["observations"], data_source="LIVE_FIRMS")
+        for k in insert_stats:
+            insert_stats[k] = fallback_stats.get(k, 0)
 
-    # Store into DuckDB with deduplication and validation
-    insert_stats = db_service.insert_observations(raw_observations, data_source="LIVE_FIRMS")
     insert_stats["modis_count"] = query_res.get("modis_count", 0)
     insert_stats["viirs_count"] = query_res.get("viirs_count", 0)
 
     # Record audit log
+    status = "SUCCESS" if insert_stats["received"] > 0 else ("PARTIAL" if query_res.get("errors") else "NO_DATA")
     db_service.record_ingestion_log(
         aoi_id="global",
-        status="SUCCESS",
+        status=status,
         result_stats=insert_stats,
         date_start=payload.date_str or f"Recent {payload.days}d",
         date_end=datetime.utcnow().strftime("%Y-%m-%d"),
-        sensors=query_res.get("sensors_queried", [])
+        sensors=query_res.get("sensors_queried", []),
+        error_msg="; ".join(query_res.get("errors", [])) if query_res.get("errors") else None
     )
 
     # Recalculate live observation counts
     updated_counts = db_service.get_observation_counts("global", dataset_mode="LIVE")
 
+    msg = (
+        f"Successfully ingested global NASA FIRMS active fire feed. "
+        f"Retrieved {insert_stats['received']} observations ({insert_stats['inserted']} new inserted, "
+        f"{insert_stats['duplicates_skipped']} duplicates skipped)."
+    )
+    if query_res.get("errors"):
+        msg += f" (Partial product warnings: {'; '.join(query_res['errors'])})"
+
     return {
         "success": True,
         "authenticated": True,
-        "message": (
-            f"Successfully ingested global NASA FIRMS active fire feed. "
-            f"Retrieved {insert_stats['received']} observations ({insert_stats['inserted']} new inserted, "
-            f"{insert_stats['duplicates_skipped']} duplicates skipped)."
-        ),
+        "message": msg,
         "aoi_id": "global",
         "aoi_name": "Global Active Fire Network",
         "records_received": insert_stats["received"],

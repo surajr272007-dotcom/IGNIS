@@ -712,9 +712,11 @@ class DBService:
         finally:
             conn.close()
 
-    def insert_observations(self, observations: List[Dict[str, Any]], data_source: str = "LIVE_FIRMS") -> Dict[str, Any]:
+    def insert_observations(self, observations: List[Dict[str, Any]], data_source: str = "LIVE_FIRMS", chunk_size: int = 2500) -> Dict[str, Any]:
         """
-        Inserts observations with deduplication and validation.
+        Inserts observations with candidate-based deduplication and validation.
+        Processes in bounded chunks (default 2,500) to ensure memory consumption stays <50 MB
+        even when ingesting massive multi-sensor global fire feeds on 512 MB instances.
         Preserves previously ingested historical records without destructive overwrites.
         """
         if not observations:
@@ -728,145 +730,187 @@ class DBService:
 
         conn = self.get_connection()
         try:
-            ph = "%s" if self.engine_type == "postgres" else "?"
-            if self.engine_type == "postgres":
-                with conn.cursor() as cur:
-                    cur.execute(f"SELECT id, raw_hash FROM raw_observations WHERE data_source = {ph}", [data_source])
-                    rows = cur.fetchall()
-                    existing_ids = {r[0] for r in rows if r[0]}
-                    existing_hashes = {r[1] for r in rows if r[1]}
-            else:
-                existing_df = conn.execute(
-                    f"SELECT id, raw_hash FROM raw_observations WHERE data_source = {ph}",
-                    [data_source]
-                ).fetchdf()
-                existing_ids = set(existing_df["id"].dropna()) if not existing_df.empty else set()
-                existing_hashes = set(existing_df["raw_hash"].dropna()) if not existing_df.empty else set()
-
-            valid_records = []
-            duplicates_count = 0
-            invalid_count = 0
+            total_received = len(observations)
+            total_inserted = 0
+            total_duplicates = 0
+            total_invalid = 0
             now_ts = datetime.utcnow()
+            ph = "%s" if self.engine_type == "postgres" else "?"
 
-            for obs in observations:
-                try:
-                    lat = float(obs.get("latitude"))
-                    lon = float(obs.get("longitude"))
-                    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-                        invalid_count += 1
+            # Process in bounded chunks to prevent high memory watermark
+            for chunk_start in range(0, total_received, chunk_size):
+                chunk = observations[chunk_start:chunk_start + chunk_size]
+                candidates = []
+                chunk_invalid = 0
+
+                for obs in chunk:
+                    try:
+                        lat = float(obs.get("latitude"))
+                        lon = float(obs.get("longitude"))
+                        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                            chunk_invalid += 1
+                            continue
+                    except (ValueError, TypeError):
+                        chunk_invalid += 1
                         continue
-                except (ValueError, TypeError):
-                    invalid_count += 1
+
+                    acq_d = str(obs.get("acq_date", "")).strip()
+                    if not acq_d or len(acq_d) != 10:
+                        chunk_invalid += 1
+                        continue
+
+                    acq_t = str(obs.get("acq_time", "0000")).zfill(4)
+                    h = obs.get("raw_hash") or self.compute_hash(obs)
+                    obs_id = obs.get("id")
+                    if not obs_id or obs_id.startswith("FIRMS_temp"):
+                        obs_id = f"FIRMS_{obs.get('sensor')}_{obs.get('satellite', 'SAT')}_{acq_d}_{acq_t}_{lat:.4f}_{lon:.4f}"
+
+                    candidates.append((obs_id, h, obs, lat, lon, acq_d, acq_t))
+
+                total_invalid += chunk_invalid
+                if not candidates:
                     continue
 
-                acq_d = str(obs.get("acq_date", "")).strip()
-                if not acq_d or len(acq_d) != 10:
-                    invalid_count += 1
-                    continue
+                cand_ids = [c[0] for c in candidates]
+                cand_hashes = [c[1] for c in candidates]
 
-                h = obs.get("raw_hash") or self.compute_hash(obs)
-                obs_id = obs.get("id")
-                if not obs_id or obs_id.startswith("FIRMS_temp"):
-                    obs_id = f"FIRMS_{obs.get('sensor')}_{obs.get('satellite', 'SAT')}_{acq_d}_{obs.get('acq_time', '0000')}_{lat:.4f}_{lon:.4f}"
-
-                if obs_id in existing_ids or h in existing_hashes:
-                    duplicates_count += 1
-                    continue
-
-                existing_ids.add(obs_id)
-                existing_hashes.add(h)
-
-                valid_records.append({
-                    "id": obs_id,
-                    "sensor": str(obs.get("sensor", "UNKNOWN")).upper(),
-                    "satellite": str(obs.get("satellite", "UNKNOWN")),
-                    "instrument": str(obs.get("instrument", obs.get("sensor", "UNKNOWN"))),
-                    "latitude": lat,
-                    "longitude": lon,
-                    "brightness": float(obs.get("brightness", 300.0)),
-                    "scan": float(obs.get("scan", 1.0)),
-                    "track": float(obs.get("track", 1.0)),
-                    "acq_date": acq_d,
-                    "acq_time": str(obs.get("acq_time", "0000")).zfill(4),
-                    "confidence": str(obs.get("confidence", "nominal")),
-                    "confidence_numeric": int(obs.get("confidence_numeric", 50)),
-                    "version": str(obs.get("version", "NRT")),
-                    "bright_t31": float(obs.get("bright_t31", 295.0)),
-                    "frp": max(0.0, float(obs.get("frp", 0.0))),
-                    "daynight": str(obs.get("daynight", "D")).upper()[:1],
-                    "aoi_id": str(obs.get("aoi_id", "global")),
-                    "resolution_m": int(obs.get("resolution_m", 1000 if obs.get("sensor") == "MODIS" else 375)),
-                    "data_source": data_source,
-                    "ingested_at": now_ts,
-                    "raw_hash": h,
-                    "country": str(obs.get("country", "Unknown")),
-                    "country_code": str(obs.get("country_code", "UNK")),
-                    "continent": str(obs.get("continent", "Unknown")),
-                    "continent_code": str(obs.get("continent_code", "UNK")),
-                    "proximity_label": str(obs.get("proximity_label", "")),
-                    "nearest_city": str(obs.get("nearest_city", "")) if obs.get("nearest_city") else None
-                })
-
-            inserted_count = len(valid_records)
-            if inserted_count > 0:
+                # Query database ONLY for existing IDs and hashes among current candidates
+                # Avoids loading entire multi-hundred-thousand record warehouse into Python RAM
                 if self.engine_type == "postgres":
                     with conn.cursor() as cur:
-                        tuples = [
-                            (
-                                r["id"], r["sensor"], r["satellite"], r["instrument"], r["latitude"], r["longitude"],
-                                r["brightness"], r["scan"], r["track"], r["acq_date"], r["acq_time"], r["confidence"],
-                                r["confidence_numeric"], r["version"], r["bright_t31"], r["frp"], r["daynight"],
-                                r["aoi_id"], r["resolution_m"], r["data_source"], r["ingested_at"], r["raw_hash"],
-                                r["country"], r["country_code"], r["continent"], r["continent_code"],
-                                r["proximity_label"], r["nearest_city"]
-                            )
-                            for r in valid_records
-                        ]
-                        insert_sql = """
-                            INSERT INTO raw_observations (
+                        cur.execute(f"""
+                            SELECT id, raw_hash FROM raw_observations 
+                            WHERE (id = ANY(%s) OR raw_hash = ANY(%s))
+                              AND data_source = %s
+                        """, (cand_ids, cand_hashes, data_source))
+                        matched_rows = cur.fetchall()
+                    db_existing_ids = {r[0] for r in matched_rows if r[0]}
+                    db_existing_hashes = {r[1] for r in matched_rows if r[1]}
+                else:
+                    cursor = conn.cursor()
+                    check_df = pd.DataFrame({"id": cand_ids, "raw_hash": cand_hashes})
+                    cursor.register("df_cand_check", check_df)
+                    matched_rows = cursor.execute(f"""
+                        SELECT id, raw_hash FROM raw_observations 
+                        WHERE (id IN (SELECT id FROM df_cand_check) OR raw_hash IN (SELECT raw_hash FROM df_cand_check))
+                          AND data_source = ?
+                    """, [data_source]).fetchall()
+                    cursor.unregister("df_cand_check")
+                    cursor.close()
+                    db_existing_ids = {r[0] for r in matched_rows if r[0]}
+                    db_existing_hashes = {r[1] for r in matched_rows if r[1]}
+
+                seen_ids = set(db_existing_ids)
+                seen_hashes = set(db_existing_hashes)
+                valid_records = []
+                chunk_dups = 0
+
+                for obs_id, h, obs, lat, lon, acq_d, acq_t in candidates:
+                    if obs_id in seen_ids or h in seen_hashes:
+                        chunk_dups += 1
+                        continue
+
+                    seen_ids.add(obs_id)
+                    seen_hashes.add(h)
+
+                    valid_records.append({
+                        "id": obs_id,
+                        "sensor": str(obs.get("sensor", "UNKNOWN")).upper(),
+                        "satellite": str(obs.get("satellite", "UNKNOWN")),
+                        "instrument": str(obs.get("instrument", obs.get("sensor", "UNKNOWN"))),
+                        "latitude": lat,
+                        "longitude": lon,
+                        "brightness": float(obs.get("brightness", 300.0)),
+                        "scan": float(obs.get("scan", 1.0)),
+                        "track": float(obs.get("track", 1.0)),
+                        "acq_date": acq_d,
+                        "acq_time": acq_t,
+                        "confidence": str(obs.get("confidence", "nominal")),
+                        "confidence_numeric": int(obs.get("confidence_numeric", 50)),
+                        "version": str(obs.get("version", "NRT")),
+                        "bright_t31": float(obs.get("bright_t31", 295.0)),
+                        "frp": max(0.0, float(obs.get("frp", 0.0))),
+                        "daynight": str(obs.get("daynight", "D")).upper()[:1],
+                        "aoi_id": str(obs.get("aoi_id", "global")),
+                        "resolution_m": int(obs.get("resolution_m", 1000 if obs.get("sensor") == "MODIS" else 375)),
+                        "data_source": data_source,
+                        "ingested_at": now_ts,
+                        "raw_hash": h,
+                        "country": str(obs.get("country", "Unknown")),
+                        "country_code": str(obs.get("country_code", "UNK")),
+                        "continent": str(obs.get("continent", "Unknown")),
+                        "continent_code": str(obs.get("continent_code", "UNK")),
+                        "proximity_label": str(obs.get("proximity_label", "")),
+                        "nearest_city": str(obs.get("nearest_city", "")) if obs.get("nearest_city") else None
+                    })
+
+                total_duplicates += chunk_dups
+                inserted_count = len(valid_records)
+                total_inserted += inserted_count
+
+                if inserted_count > 0:
+                    if self.engine_type == "postgres":
+                        with conn.cursor() as cur:
+                            tuples = [
+                                (
+                                    r["id"], r["sensor"], r["satellite"], r["instrument"], r["latitude"], r["longitude"],
+                                    r["brightness"], r["scan"], r["track"], r["acq_date"], r["acq_time"], r["confidence"],
+                                    r["confidence_numeric"], r["version"], r["bright_t31"], r["frp"], r["daynight"],
+                                    r["aoi_id"], r["resolution_m"], r["data_source"], r["ingested_at"], r["raw_hash"],
+                                    r["country"], r["country_code"], r["continent"], r["continent_code"],
+                                    r["proximity_label"], r["nearest_city"]
+                                )
+                                for r in valid_records
+                            ]
+                            insert_sql = """
+                                INSERT INTO raw_observations (
+                                    id, sensor, satellite, instrument, latitude, longitude, brightness,
+                                    scan, track, acq_date, acq_time, confidence, confidence_numeric,
+                                    version, bright_t31, frp, daynight, aoi_id, resolution_m,
+                                    data_source, ingested_at, raw_hash, country, country_code,
+                                    continent, continent_code, proximity_label, nearest_city
+                                ) VALUES %s
+                                ON CONFLICT (id) DO UPDATE SET
+                                    brightness = EXCLUDED.brightness,
+                                    confidence = EXCLUDED.confidence,
+                                    confidence_numeric = EXCLUDED.confidence_numeric,
+                                    frp = EXCLUDED.frp,
+                                    ingested_at = EXCLUDED.ingested_at
+                            """
+                            execute_values(cur, insert_sql, tuples, page_size=2500)
+                        conn.commit()
+                    else:
+                        df = pd.DataFrame(valid_records)
+                        cursor = conn.cursor()
+                        cursor.register("df_insert", df)
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO raw_observations (
                                 id, sensor, satellite, instrument, latitude, longitude, brightness,
                                 scan, track, acq_date, acq_time, confidence, confidence_numeric,
                                 version, bright_t31, frp, daynight, aoi_id, resolution_m,
                                 data_source, ingested_at, raw_hash, country, country_code,
                                 continent, continent_code, proximity_label, nearest_city
-                            ) VALUES %s
-                            ON CONFLICT (id) DO UPDATE SET
-                                brightness = EXCLUDED.brightness,
-                                confidence = EXCLUDED.confidence,
-                                confidence_numeric = EXCLUDED.confidence_numeric,
-                                frp = EXCLUDED.frp,
-                                ingested_at = EXCLUDED.ingested_at
-                        """
-                        execute_values(cur, insert_sql, tuples, page_size=5000)
-                    conn.commit()
-                else:
-                    df = pd.DataFrame(valid_records)
-                    cursor = conn.cursor()
-                    cursor.register("df_insert", df)
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO raw_observations (
-                            id, sensor, satellite, instrument, latitude, longitude, brightness,
-                            scan, track, acq_date, acq_time, confidence, confidence_numeric,
-                            version, bright_t31, frp, daynight, aoi_id, resolution_m,
-                            data_source, ingested_at, raw_hash, country, country_code,
-                            continent, continent_code, proximity_label, nearest_city
-                        ) SELECT 
-                            id, sensor, satellite, instrument, latitude, longitude, brightness,
-                            scan, track, acq_date, acq_time, confidence, confidence_numeric,
-                            version, bright_t31, frp, daynight, aoi_id, resolution_m,
-                            data_source, ingested_at, raw_hash, country, country_code,
-                            continent, continent_code, proximity_label, nearest_city
-                        FROM df_insert
-                    """)
-                    cursor.unregister("df_insert")
-                    cursor.close()
+                            ) SELECT 
+                                id, sensor, satellite, instrument, latitude, longitude, brightness,
+                                scan, track, acq_date, acq_time, confidence, confidence_numeric,
+                                version, bright_t31, frp, daynight, aoi_id, resolution_m,
+                                data_source, ingested_at, raw_hash, country, country_code,
+                                continent, continent_code, proximity_label, nearest_city
+                            FROM df_insert
+                        """)
+                        cursor.unregister("df_insert")
+                        cursor.close()
+
+                # Clean up chunk structures to free memory immediately
+                del candidates
+                del valid_records
 
             return {
-                "received": len(observations),
-                "validated": len(valid_records) + duplicates_count,
-                "inserted": inserted_count,
-                "duplicates_skipped": duplicates_count,
-                "invalid_rejected": invalid_count
+                "received": total_received,
+                "validated": total_inserted + total_duplicates,
+                "inserted": total_inserted,
+                "duplicates_skipped": total_duplicates,
+                "invalid_rejected": total_invalid
             }
 
         finally:

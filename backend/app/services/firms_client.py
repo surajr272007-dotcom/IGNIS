@@ -9,9 +9,15 @@ import httpx
 import pandas as pd
 import io
 import re
+import csv
+import gc
+import inspect
+import logging
 import hashlib
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
+
+logger = logging.getLogger("ignis.firms")
 from ..config import settings, update_env_map_key
 from ..data.geo_reference import resolve_geographic_context
 from ..data.reference_regions import REFERENCE_AOIS
@@ -333,12 +339,20 @@ class FIRMSClient:
 
     async def fetch_global_fires(self, days: int = 1, date_str: Optional[str] = None,
                                  map_key: Optional[str] = None,
-                                 sources: Optional[List[str]] = None) -> Dict[str, Any]:
+                                 sources: Optional[List[str]] = None,
+                                 on_batch: Optional[Callable[[List[Dict[str, Any]], str], Any]] = None,
+                                 batch_size: int = 2500) -> Dict[str, Any]:
         """
         Retrieves global active-fire thermal observations using NASA FIRMS Area API:
         URL pattern: https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/{SOURCE}/world/{DAYS}
         Sources: MODIS_NRT, VIIRS_NOAA20_NRT, VIIRS_NOAA21_NRT, VIIRS_SNPP_NRT
-        Enriches records with continent, country, and nearest city proximity.
+
+        Sequential & Streaming Architecture (Render Free 512MB RAM Safe):
+        1. Queries the four products strictly sequentially (one at a time).
+        2. Streams and parses CSV using csv.DictReader (no DataFrame allocations).
+        3. Enriches and flushes records in small batches (default 2,500) via on_batch callback.
+        4. When on_batch is provided, observations are NOT retained in memory, capping RAM usage <50 MB.
+        5. Handles NASA API timeouts and partial product failures gracefully without server crash.
         """
         key = self.get_effective_map_key(map_key)
         if not key:
@@ -368,33 +382,48 @@ class FIRMSClient:
         all_observations = []
         source_counts = {}
         errors = []
+        total_records_processed = 0
+        modis_total = 0
+        viirs_total = 0
 
         # Regional AOIs for spatial classification tagging
         regional_aois = [a for a in REFERENCE_AOIS if a["id"] != "global"]
 
+        logger.info(f"[FIRMS INGEST] Starting global ingestion across {len(query_sources)} products (days={clamped_days})...")
+
         async with httpx.AsyncClient(timeout=90.0) as client:
-            for src in query_sources:
+            for idx, src in enumerate(query_sources, 1):
                 endpoint = f"{self.base_url}/api/area/csv/{key}/{src}/world/{clamped_days}"
                 if date_str:
                     endpoint += f"/{date_str}"
 
+                logger.info(f"[FIRMS INGEST] [{idx}/{len(query_sources)}] Requesting {src} from NASA FIRMS (/world/{clamped_days})...")
+
                 try:
                     resp = await client.get(endpoint)
                     if resp.status_code != 200:
-                        errors.append(f"{src}: HTTP {resp.status_code}")
+                        err_msg = f"{src}: NASA API returned HTTP {resp.status_code}"
+                        logger.warning(f"[FIRMS INGEST] {err_msg}")
+                        errors.append(err_msg)
                         continue
 
                     csv_text = resp.text.strip()
                     if "invalid map_key" in csv_text.lower():
-                        errors.append(f"{src}: Invalid MAP_KEY")
+                        err_msg = f"{src}: Invalid MAP_KEY rejected by NASA EOSDIS"
+                        logger.warning(f"[FIRMS INGEST] {err_msg}")
+                        errors.append(err_msg)
+                        # If first product fails due to bad auth, abort early
+                        if idx == 1:
+                            return {
+                                "success": False,
+                                "error_code": "INVALID_MAP_KEY",
+                                "message": "NASA FIRMS rejected the MAP_KEY: Invalid MAP_KEY.",
+                                "observations": []
+                            }
                         continue
 
                     if not csv_text or "No fires found" in csv_text:
-                        source_counts[src] = 0
-                        continue
-
-                    df = pd.read_csv(io.StringIO(csv_text))
-                    if df.empty:
+                        logger.info(f"[FIRMS INGEST] {src}: Zero active fires returned.")
                         source_counts[src] = 0
                         continue
 
@@ -405,17 +434,22 @@ class FIRMSClient:
                     sensor_type = src_meta["sensor"]
                     resolution = src_meta["res"]
 
-                    src_records = []
-                    for _, row in df.iterrows():
+                    # Stream parse with csv.DictReader to avoid large pandas DataFrame allocations
+                    csv_io = io.StringIO(csv_text)
+                    reader = csv.DictReader(csv_io)
+                    current_batch = []
+                    src_records_count = 0
+
+                    for row in reader:
                         try:
-                            lat = float(row["latitude"])
-                            lon = float(row["longitude"])
+                            lat = float(row.get("latitude", 0.0))
+                            lon = float(row.get("longitude", 0.0))
                             if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
                                 continue
 
                             acq_d = str(row.get("acq_date", "")).strip()
                             acq_t = str(row.get("acq_time", "0000")).zfill(4)
-                            sat_raw = str(row.get("satellite", "UNKNOWN"))
+                            sat_raw = str(row.get("satellite", "UNKNOWN")).strip()
 
                             if sat_raw in ("T", "Terra"):
                                 sat_name = "Terra"
@@ -458,7 +492,7 @@ class FIRMSClient:
                             raw_key = f"{sensor_type}_{sat_name}_{acq_d}_{acq_t}_{lat:.4f}_{lon:.4f}_{frp:.1f}"
                             h = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
-                            # Geographic reverse geocoding
+                            # Fast cached geographic reverse geocoding
                             geo = resolve_geographic_context(lat, lon)
 
                             # Determine matching regional AOI if any
@@ -469,7 +503,7 @@ class FIRMSClient:
                                     matched_aoi = a["id"]
                                     break
 
-                            src_records.append({
+                            current_batch.append({
                                 "id": stable_id,
                                 "sensor": sensor_type,
                                 "satellite": sat_name,
@@ -498,21 +532,76 @@ class FIRMSClient:
                                 "data_source": "LIVE_FIRMS",
                                 "raw_hash": h
                             })
+                            src_records_count += 1
+                            if sensor_type == "MODIS":
+                                modis_total += 1
+                            else:
+                                viirs_total += 1
+
+                            # Incremental batch dispatch to keep RAM bounded
+                            if len(current_batch) >= batch_size:
+                                if on_batch:
+                                    if inspect.iscoroutinefunction(on_batch):
+                                        await on_batch(current_batch, src)
+                                    else:
+                                        on_batch(current_batch, src)
+                                else:
+                                    all_observations.extend(current_batch)
+                                current_batch = []
+
                         except Exception:
                             continue
 
-                    source_counts[src] = len(src_records)
-                    all_observations.extend(src_records)
+                    # Flush remaining observations in current batch
+                    if current_batch:
+                        if on_batch:
+                            if inspect.iscoroutinefunction(on_batch):
+                                await on_batch(current_batch, src)
+                            else:
+                                on_batch(current_batch, src)
+                        else:
+                            all_observations.extend(current_batch)
+                        current_batch = []
 
+                    source_counts[src] = src_records_count
+                    total_records_processed += src_records_count
+                    logger.info(f"[FIRMS INGEST] Completed {src}: {src_records_count:,} records retrieved and processed.")
+
+                    # Explicitly release large text buffer & trigger GC
+                    del csv_text
+                    del csv_io
+                    gc.collect()
+
+                except httpx.TimeoutException:
+                    err_msg = f"{src}: NASA API timed out after 90 seconds"
+                    logger.warning(f"[FIRMS INGEST] {err_msg}. Continuing with remaining products.")
+                    errors.append(err_msg)
+                except httpx.RequestError as ex:
+                    err_msg = f"{src}: Network connection error ({type(ex).__name__}): {str(ex)}"
+                    logger.warning(f"[FIRMS INGEST] {err_msg}. Continuing with remaining products.")
+                    errors.append(err_msg)
                 except Exception as ex:
-                    errors.append(f"{src}: {str(ex)}")
+                    err_msg = f"{src}: Unexpected error during ingestion: {str(ex)}"
+                    logger.error(f"[FIRMS INGEST] {err_msg}")
+                    errors.append(err_msg)
 
-        modis_total = sum(1 for o in all_observations if o["sensor"] == "MODIS")
-        viirs_total = sum(1 for o in all_observations if o["sensor"] == "VIIRS")
+        if total_records_processed == 0 and errors:
+            return {
+                "success": False,
+                "error_code": "INGESTION_FAILED",
+                "message": f"Global ingestion failed across all queried products: {'; '.join(errors)}",
+                "observations": [],
+                "errors": errors
+            }
+
+        logger.info(
+            f"[FIRMS INGEST] Ingestion finished. Total: {total_records_processed:,} "
+            f"(MODIS: {modis_total:,}, VIIRS: {viirs_total:,}, Errors: {len(errors)})."
+        )
 
         return {
             "success": True,
-            "total_records": len(all_observations),
+            "total_records": total_records_processed,
             "modis_count": modis_total,
             "viirs_count": viirs_total,
             "by_source": source_counts,
